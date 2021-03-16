@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Mar 16 13:24:36 2021
-
-@author: orestis
-"""
-
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -15,6 +7,12 @@ vaisala = pd.read_csv("vaisala.txt",
                       parse_dates={'date': ['day', 'time']},
                       index_col="date",
                       sep='\t')
+
+
+reference = pd.read_csv("reference.txt", sep=" ", 
+                        names=["day", "time", "a", "b", "c", "d", "e", "f", "g"],
+                        parse_dates={'date': ['day', 'time']},
+                        index_col="date")
 
 
 # plt.plot(vaisala.index ,vaisala["average"], label="vaisala")
