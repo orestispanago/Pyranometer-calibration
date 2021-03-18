@@ -1,0 +1,15 @@
+Column	Parameter
+1		Date Time (yyyy-mm-dd hh:mm)
+2		Record number (-)
+3		Station code 1 (-)
+4		Station code 2 (-)
+5		Diffuse horizontal irradiance (μV) # to convert to W.m^-2 = μV * 1000 / 8.64
+6		Diffuse horizontal irradiance - Standard deviation(μV) # to convert to W.m^-2 = μV * 1000 / 8.64
+7		Global horizontal irradiance (μV) # to convert to W.m^-2 = μV * 1000 / 8.63
+8		Global horizontal irradiance - Standard deviation(μV) # to convert to W.m^-2 = μV * 1000 / 8.63
+9		Direct normal irradiance (estimate from sunshine duration) (W.m^-2)
+10		Direct normal irradiance (estimate from sunshine duration) - Standard deviation (W.m^-2)
+11		Sunshine duration (s)
+12		Battery voltage (V)
+13		Global south tilted irradiance (μV)
+14		Global south tilted irradiance - Standard deviation(μV)

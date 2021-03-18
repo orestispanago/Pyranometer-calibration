@@ -9,22 +9,22 @@ vaisala = pd.read_csv("vaisala.txt",
                       sep='\t')
 vaisala.index = vaisala.index.round("1min")
 vaisala = vaisala.tz_localize("EET").tz_convert('UTC')
+vaisala["average_volts"] = vaisala["average"]/100
 
 
-cmp11 = pd.read_csv("cmp11.txt", 
-                     names=["TIMESTAMP","RECORD","GHI_final","DNI_final",
-                            "DHI_final","Sensor_Temp_Avg","LoggerVoltage_Min",
-                            "LoggerTemp_C_Max","Error_Max"],
-                     parse_dates=True,
-                     index_col="TIMESTAMP")
+
+cmp11 = pd.read_csv("Solar_1min_db_store.txt", 
+                    names=["datetime", "GHI_volts"], 
+                    usecols=[0,6],
+                    parse_dates=True,
+                    index_col="datetime")
+
 cmp11 = cmp11.tz_localize("UTC")
-
+cmp11["GHI_volts"] = cmp11["GHI_volts"]
 merged = pd.concat([vaisala, cmp11], axis=1)
 
 
-# plt.plot(vaisala.index ,vaisala["average"], label="vaisala")
-vaisala["average"].plot(label="vaisala")
-cmp11["GHI_final"].plot(label="cmp11")
-# plt.xticks(rotation=45)
+vaisala["average_volts"].plot(label="vaisala")
+cmp11["GHI_volts"].plot(label="cmp11")
 plt.legend()
 plt.show()
