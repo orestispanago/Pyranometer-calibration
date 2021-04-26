@@ -67,7 +67,6 @@ def calc_outliers(df):
     df["good"] = (resids > (q25 - 1.5 * iqr)) & (resids < (q75 + 1.5 * iqr))
     good = df[df["good"] == True]
     bad = df[df["good"] == False]
-    print(f"Outliers: {len(bad)}")
     return good, bad
 
 def plot_regression_and_outliers(good, bad):
@@ -84,31 +83,28 @@ def plot_regression_and_outliers(good, bad):
     plt.savefig(f"results/{date}/regression.png")
     plt.show()
 
-
-def regression_results(x,y, print_them=False):
+def regression_results(x,y):
     mod = sm.OLS(y, x)
-    regresults = mod.fit()
-    if print_them:
-        slope = regresults.params[0]
-        slope_error = regresults.bse[0]
-        pvalue = regresults.pvalues[0]
-        r2 = regresults.rsquared
-        print(f"Slope: {slope} ± {slope_error}")
-        print(f"P-value: {pvalue}")
-        print(f"R-squared: {r2}")
-        print(f"Count: {len(x)}")
-    return regresults
+    return mod.fit()
 
-def calc_wm2_cor(print_them=True):
-    cmp11_sensitivity = 8.63 # μV
-    cmp11_constant = 1000 / cmp11_sensitivity # mV/(W/m2)
+def results_to_df(date, regresults):    
+    results = pd.DataFrame(index=[date])
+    results["Slope"] = regresults.params[0]
+    results["Slope-err"] = regresults.bse[0]
+    results["P-Value"] = regresults.pvalues[0]
+    results["R-Squared"] = regresults.rsquared
+    results["Outliers"] = len(bad)
+    results["Sensitivity μV/(W/m2)"] = cmp11_sensitivity * regresults.params[0]
+    return results.T
+
+def calc_wm2_cor(regresults, print_them=True):
     friedrichs_sensitivity = cmp11_sensitivity * regresults.params[0]
     friedrichs_constant = 1000 / friedrichs_sensitivity
     merged["CMP11_W/m2"] = merged["CMP11_mV"] * cmp11_constant
     merged["friedrichs_W/m2_cor"] = merged["Friedrichs_mV"] * friedrichs_constant
     if print_them:        
         print(f"Friedrichs sensitivity: {friedrichs_sensitivity:.2f} μV/(W/m2)")
-        print(f"Irradiance in W/m2 = mV * 1000 / {friedrichs_sensitivity:.2f}")
+        # print(f"Irradiance in W/m2 = mV * 1000 / {friedrichs_sensitivity:.2f}")
 
 def plot_wm2_cor():
     merged['CMP11_W/m2'].plot(label="CMP11")
@@ -122,11 +118,21 @@ def mkdir_if_not_exists(dirname):
     if not os.path.exists(dirname):
         os.makedirs(dirname)
 
+def report_to_html(date, regresults, merged):        
+    results = results_to_df(date, regresults)
+    statistics = pd.concat([results, merged.describe()], axis=1)
+    statistics.fillna('', inplace=True)
+    statistics.to_html(f"results/{date}.html")
+
+
+cmp11_sensitivity = 8.63 # μV
+cmp11_constant = 1000 / cmp11_sensitivity # mV/(W/m2)
+
 dates = ["2021-04-21", "2021-04-22", "2021-04-23", "2021-04-24", "2021-04-25"]
 
 
 for date in dates:
-    print(date, end="\n==========\n")
+    print(date)
     mkdir_if_not_exists(f"results/{date}")
     date_time = pd.to_datetime(date, format='%Y-%m-%d')
     
@@ -137,9 +143,9 @@ for date in dates:
     good, bad = calc_outliers(merged)
     plot_regression_and_outliers(good, bad)
     
-    regresults = regression_results(good["CMP11_mV"], good["Friedrichs_mV"], 
-                                    print_them=True)
+    regresults = regression_results(good["CMP11_mV"], good["Friedrichs_mV"])
     
-    calc_wm2_cor()
-    print(merged.describe())
+    calc_wm2_cor(regresults)
     plot_wm2_cor()
+    
+    report_to_html(date, regresults, merged)
