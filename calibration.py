@@ -1,36 +1,53 @@
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import stats
 import numpy as np
 import statsmodels.api as sm
-from statsmodels.api import add_constant
-
-cmp11_sensitivity = 8.63 # μV
-cmp11_constant = 1000 / cmp11_sensitivity # mV/(W/m2)
-meteon_sensitivity = 10
-meteon_constant = 1000 / meteon_sensitivity
-
-friedrichs = pd.read_csv("friedrichs.txt", 
-                      skiprows=1,
-                      names=["day", "time", "average"],
-                      usecols=[0,1,4],
-                      parse_dates={'date': ['day', 'time']},
-                      index_col="date",
-                      sep='\t')
-friedrichs.index = friedrichs.index.round("1min")
-friedrichs = friedrichs.tz_localize("EET").tz_convert('UTC')
-friedrichs["friedrichs_mV"] = friedrichs["average"]/meteon_constant
-
-cmp11 = pd.read_csv("Solar_1min_db_store.txt",
-                    names=["datetime", "CMP11_mV"],
-                    usecols=[0,6],
-                    parse_dates=True,
-                    index_col="datetime")
-
-cmp11 = cmp11.tz_localize("UTC")
-merged = pd.concat([friedrichs, cmp11], axis=1).dropna()
+import mysql.connector
 
 
+def select(start_date, end_date):  
+    mydb = mysql.connector.connect(
+        host="173.249.63.213",
+        port="3360",
+        user="ReadOnlyUser",
+        passwd="ReadOnlyPassword",
+        database="collector"
+        )
+    mycursor = mydb.cursor()
+    mycursor.execute("SELECT time, irradiance FROM pyranometer \
+                     WHERE Time BETWEEN %s AND %s", 
+                     (start_date, end_date))
+    data = pd.DataFrame(mycursor.fetchall())
+    data.columns = mycursor.column_names
+    mydb.close()
+    return data
+
+
+def get_data(day):
+    friedrichs = select(day, day+ pd.Timedelta(days=1))
+    friedrichs = friedrichs.rename(columns={"irradiance":"Friedrichs_mV"})
+    friedrichs.set_index("time", inplace=True)
+    friedrichs.index = friedrichs.index.round("1min")
+    friedrichs = friedrichs.tz_localize("UTC")
+    cmp11 = pd.read_csv("Solar_1min_db_store.txt",
+                        names=["datetime", "CMP11_mV"],
+                        usecols=[0,6],
+                        parse_dates=True,
+                        index_col="datetime")
+        
+    cmp11 = cmp11.loc[day: day+ pd.Timedelta(days=1)-pd.Timedelta(minutes=1)]
+    cmp11 = cmp11.tz_localize("UTC")
+    merged = pd.concat([friedrichs, cmp11], axis=1).dropna()
+    return merged    
+
+def plot_raw_mV():
+    merged['CMP11_mV'].plot(label="CMP11")
+    merged["Friedrichs_mV"].plot(label="Friedrichs")
+    plt.ylabel("Voltage $(mV)$")
+    plt.legend()
+    plt.savefig(f"results/{date}/raw_mV.png")
 
 def plot_scatter(x, y):
     slope, intercept, r_value, p_value, std_err = stats.linregress(x,y)
@@ -42,10 +59,8 @@ def plot_scatter(x, y):
     plt.legend()
     plt.show()
 
-
-
 def calc_outliers(df):
-    resids = df["friedrichs_mV"] - df["CMP11_mV"]
+    resids = df["Friedrichs_mV"] - df["CMP11_mV"]
     q75 = np.percentile(resids, 75)
     q25 = np.percentile(resids, 25)
     iqr = q75 - q25  # InterQuantileRange
@@ -54,57 +69,83 @@ def calc_outliers(df):
     bad = df[df["good"] == False]
     return good, bad
 
-
-def plot_regression_and_residuals(good, bad):
-    y = good["friedrichs_mV"]
+def plot_regression_and_outliers(good, bad):
+    y = good["Friedrichs_mV"]
     x = good["CMP11_mV"]
     slope = regression_results(x, y).params[0]
     plt.plot(x,y, ".")
-    plt.plot(bad["CMP11_mV"],bad["friedrichs_mV"], ".", label="Outliers")
+    plt.plot(bad["CMP11_mV"],bad["Friedrichs_mV"], ".", label="Outliers")
     plt.plot(x, slope*x, 'r', label=f'y = {slope:.2f} x')
     plt.title("Pyranometer voltage (mV)")
     plt.xlabel("CMP11")
     plt.ylabel("Friedrichs")
     plt.legend()
+    plt.savefig(f"results/{date}/regression.png")
     plt.show()
 
-
 def regression_results(x,y):
-    # X = add_constant(x)  # include constant (intercept) in ols model
     mod = sm.OLS(y, x)
     return mod.fit()
 
-# plot_scatter(merged["CMP11_mV"], merged["friedrichs_mV"])
-good, bad = calc_outliers(merged)
-plot_regression_and_residuals(good, bad)
+def results_to_df(date, regresults):    
+    results = pd.DataFrame(index=[date])
+    results["Slope"] = regresults.params[0]
+    results["Slope-err"] = regresults.bse[0]
+    results["P-Value"] = regresults.pvalues[0]
+    results["R-Squared"] = regresults.rsquared
+    results["Outliers"] = len(bad)
+    results["Sensitivity μV/(W/m2)"] = cmp11_sensitivity * regresults.params[0]
+    return results.T
 
-y = good["friedrichs_mV"]
-x = good["CMP11_mV"]
+def calc_wm2_cor(regresults, print_them=True):
+    friedrichs_sensitivity = cmp11_sensitivity * regresults.params[0]
+    friedrichs_constant = 1000 / friedrichs_sensitivity
+    merged["CMP11_W/m2"] = merged["CMP11_mV"] * cmp11_constant
+    merged["friedrichs_W/m2_cor"] = merged["Friedrichs_mV"] * friedrichs_constant
+    if print_them:        
+        print(f"Friedrichs sensitivity: {friedrichs_sensitivity:.2f} μV/(W/m2)")
+        # print(f"Irradiance in W/m2 = mV * 1000 / {friedrichs_sensitivity:.2f}")
 
-regresults = regression_results(x, y)
+def plot_wm2_cor():
+    merged['CMP11_W/m2'].plot(label="CMP11")
+    merged["friedrichs_W/m2_cor"].plot(label="Friedrichs")
+    plt.ylabel("Irradiance $(W/m^2)$")
+    plt.legend()
+    plt.savefig(f"results/{date}/wm2_cor.png")
+    plt.show()
 
-slope = regresults.params[0]
-slope_error = regresults.bse[0]
-pvalue = regresults.pvalues[0]
-r2 = regresults.rsquared
+def mkdir_if_not_exists(dirname):
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
 
-print(f"Slope: {slope} ± {slope_error}")
-print(r'$\pm$')
-print(f"P-value: {pvalue}")
-print("R-squared: ", r2)
+def report_to_html(date, regresults, merged):        
+    results = results_to_df(date, regresults)
+    statistics = pd.concat([results, merged.describe()], axis=1)
+    statistics.fillna('', inplace=True)
+    statistics.to_html(f"results/{date}.html")
 
 
+cmp11_sensitivity = 8.63 # μV
+cmp11_constant = 1000 / cmp11_sensitivity # mV/(W/m2)
 
-friedrichs_sensitivity = cmp11_sensitivity * regresults.params[0]
-friedrichs_constant = 1000 / friedrichs_sensitivity
+dates = ["2021-04-21", "2021-04-22", "2021-04-23", "2021-04-24", "2021-04-25"]
 
-print(f"Friedrichs sensitivity: {friedrichs_sensitivity:.2f} μV/(W/m2)")
-print(f"Irradiance in W/m2 = mV * 1000 / {friedrichs_sensitivity:.2f}")
 
-merged["CMP11_W/m2"] = merged["CMP11_mV"] * cmp11_constant
-merged["friedrichs_W/m2_cor"] = merged["friedrichs_mV"] * friedrichs_constant
-merged["CMP11_W/m2"].plot(label="CMP11")
-merged["friedrichs_W/m2_cor"].plot(label="Friedrichs")
-plt.ylabel("Irradiance $(W/m^2)$")
-plt.legend()
-plt.show()
+for date in dates:
+    print(date)
+    mkdir_if_not_exists(f"results/{date}")
+    date_time = pd.to_datetime(date, format='%Y-%m-%d')
+    
+    merged = get_data(date_time)
+    plot_raw_mV()
+    
+    plot_scatter(merged["CMP11_mV"], merged["Friedrichs_mV"])
+    good, bad = calc_outliers(merged)
+    plot_regression_and_outliers(good, bad)
+    
+    regresults = regression_results(good["CMP11_mV"], good["Friedrichs_mV"])
+    
+    calc_wm2_cor(regresults)
+    plot_wm2_cor()
+    
+    report_to_html(date, regresults, merged)
